@@ -27,11 +27,30 @@ interface PartsList {
   }[];
 }
 
+interface FinalList {
+  finalParts: {
+    category: string;
+    component: string;
+    selectedOption: {
+      name: string;
+      specifications: string[];
+      pros: string[];
+      cons: string[];
+      datasheetLink?: string;
+      vendorLinks?: { name: string; url: string; price?: string }[];
+    };
+    compatibilityNotes: string;
+  }[];
+  totalEstimatedCost: string;
+  compatibilitySummary: string;
+}
+
 export default function Home() {
   const [projectDescription, setProjectDescription] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
   const [partsList, setPartsList] = useState<PartsList | null>(null);
+  const [finalList, setFinalList] = useState<FinalList | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -45,6 +64,7 @@ export default function Home() {
     setError(null);
     setAgentSteps([]);
     setPartsList(null);
+    setFinalList(null);
 
     try {
       const response = await fetch("/api/agent", {
@@ -68,6 +88,7 @@ export default function Home() {
       }));
       setAgentSteps(stepsWithDates);
       setPartsList(data.partsList || null);
+      setFinalList(data.finalList || null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");
     } finally {
@@ -303,6 +324,111 @@ export default function Home() {
                 </div>
               ))}
             </div>
+          </div>
+        )}
+
+        {/* Final Recommended Parts List */}
+        {finalList && finalList.finalParts.length > 0 && (
+          <div className="bg-white dark:bg-slate-800 rounded-lg shadow-lg p-6">
+            <h2 className="text-2xl font-semibold text-slate-900 dark:text-white mb-6">
+              Recommended Final Parts List
+            </h2>
+            {finalList.compatibilitySummary && (
+              <div className="mb-6 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
+                <h3 className="text-lg font-semibold text-green-800 dark:text-green-200 mb-2">
+                  Compatibility Summary
+                </h3>
+                <p className="text-green-700 dark:text-green-300">
+                  {finalList.compatibilitySummary}
+                </p>
+              </div>
+            )}
+            <div className="space-y-6">
+              {finalList.finalParts.map((part, index) => (
+                <div
+                  key={index}
+                  className="bg-slate-50 dark:bg-slate-700/50 rounded-lg p-4"
+                >
+                  <div className="flex items-start justify-between mb-3">
+                    <div>
+                      <h3 className="text-lg font-semibold text-slate-900 dark:text-white">
+                        {part.component}
+                      </h3>
+                      <p className="text-sm text-slate-600 dark:text-slate-400">
+                        Category: {part.category}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-medium text-slate-900 dark:text-white">
+                        {part.selectedOption.name}
+                      </p>
+                    </div>
+                  </div>
+                  {part.selectedOption.specifications.length > 0 && (
+                    <div className="mb-3">
+                      <p className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                        Specifications:
+                      </p>
+                      <ul className="text-sm text-slate-600 dark:text-slate-400 space-y-1">
+                        {part.selectedOption.specifications.map((spec, specIndex) => (
+                          <li key={specIndex} className="list-disc list-inside">
+                            {spec}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {part.compatibilityNotes && (
+                    <div className="mb-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+                      <p className="text-sm text-blue-800 dark:text-blue-200">
+                        <span className="font-semibold">Compatibility Notes:</span> {part.compatibilityNotes}
+                      </p>
+                    </div>
+                  )}
+                  {part.selectedOption.datasheetLink && (
+                    <div className="mb-2">
+                      <a
+                        href={part.selectedOption.datasheetLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
+                      >
+                        📄 Datasheet
+                      </a>
+                    </div>
+                  )}
+                  {part.selectedOption.vendorLinks && part.selectedOption.vendorLinks.length > 0 && (
+                    <div>
+                      <p className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                        Vendors:
+                      </p>
+                      <ul className="space-y-1">
+                        {part.selectedOption.vendorLinks.map((vendor, vendorIndex) => (
+                          <li key={vendorIndex}>
+                            <a
+                              href={vendor.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
+                            >
+                              {vendor.name}
+                              {vendor.price && ` - ${vendor.price}`}
+                            </a>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            {finalList.totalEstimatedCost && (
+              <div className="mt-6 p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
+                <p className="text-yellow-800 dark:text-yellow-200">
+                  <span className="font-semibold">Total Estimated Cost:</span> {finalList.totalEstimatedCost}
+                </p>
+              </div>
+            )}
           </div>
         )}
       </div>

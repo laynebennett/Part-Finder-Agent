@@ -7,6 +7,7 @@ const groq = new Groq({
 });
 
 const TAVILY_API_URL = "https://api.tavily.com/search";
+const DIGIKEY_API_URL = "https://api.digikey.com"; // Base URL for DigiKey API
 
 interface AgentStep {
   step: string;
@@ -30,6 +31,25 @@ async function searchWithTavily(query: string): Promise<any> {
     return response.data;
   } catch (error) {
     console.error("Tavily search error:", error);
+    throw error;
+  }
+}
+
+async function searchWithDigiKey(query: string): Promise<any> {
+  try {
+    const response = await axios.get(`${DIGIKEY_API_URL}/search/v3/products/keyword`, {
+      params: {
+        keywords: query,
+        limit: 5,
+      },
+      headers: {
+        'Authorization': `Bearer ${process.env.DIGIKEY_API_KEY}`,
+        'X-DIGIKEY-Client-Id': process.env.DIGIKEY_CLIENT_ID || '', // If needed
+      },
+    });
+    return response.data;
+  } catch (error) {
+    console.error("DigiKey search error:", error);
     throw error;
   }
 }
@@ -89,6 +109,8 @@ export async function POST(request: NextRequest) {
         { status: 500 }
       );
     }
+    // DigiKey API key is optional for now
+    const hasDigiKey = !!process.env.DIGIKEY_API_KEY;
 
     const steps: AgentStep[] = [];
 
@@ -131,6 +153,14 @@ Respond in JSON format with this structure:
       // Extract JSON from the response
       const jsonMatch = requirementsAnalysis.match(/\{[\s\S]*\}/);
       requirementsData = jsonMatch ? JSON.parse(jsonMatch[0]) : { categories: [] };
+      // Deduplicate categories by name
+      const uniqueCategories = new Map();
+      for (const cat of requirementsData.categories || []) {
+        if (!uniqueCategories.has(cat.name.toLowerCase())) {
+          uniqueCategories.set(cat.name.toLowerCase(), cat);
+        }
+      }
+      requirementsData.categories = Array.from(uniqueCategories.values());
     } catch (e) {
       console.error("Failed to parse requirements:", e);
       requirementsData = { categories: [] };
@@ -168,6 +198,14 @@ Generate 3-5 specific search queries for each category. Format as a JSON array o
     try {
       const jsonMatch = searchPlanResponse.match(/\[[\s\S]*\]/);
       searchPlan = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
+      // Deduplicate search plan by category
+      const uniqueSearchPlan = new Map();
+      for (const item of searchPlan) {
+        if (!uniqueSearchPlan.has(item.category.toLowerCase())) {
+          uniqueSearchPlan.set(item.category.toLowerCase(), item);
+        }
+      }
+      searchPlan = Array.from(uniqueSearchPlan.values());
     } catch (e) {
       console.error("Failed to parse search plan:", e);
       searchPlan = [];
@@ -320,12 +358,72 @@ Include 2-4 options per component. Be specific with specifications, pros, and co
       })),
     };
 
+    // Step 6: Recommend final compatible parts list
+    steps.push({
+      step: "Recommending final parts list",
+      reasoning: "Selecting one compatible option per component to create a recommended final parts list",
+      timestamp: new Date(),
+    });
+
+    const finalListPrompt = `Based on the following parts list, recommend a final set of compatible components for the project.
+
+Parts List:
+${JSON.stringify(partsList, null, 2)}
+
+Project Description: ${projectDescription}
+
+Select exactly one option per component, ensuring all selected parts are compatible with each other (e.g., voltage levels, interfaces, power requirements). Consider the project requirements and constraints.
+
+Respond ONLY with valid JSON in this structure:
+{
+  "finalParts": [
+    {
+      "category": "category name",
+      "component": "component name",
+      "selectedOption": {
+        "name": "option name",
+        "specifications": ["spec1", "spec2"],
+        "pros": ["pro1", "pro2"],
+        "cons": ["con1", "con2"],
+        "datasheetLink": "link or empty",
+        "vendorLinks": [{"name": "vendor", "url": "url", "price": "price"}]
+      },
+      "compatibilityNotes": "brief notes on compatibility"
+    }
+  ],
+  "totalEstimatedCost": "approximate total cost if available",
+  "compatibilitySummary": "overall compatibility assessment"
+}`;
+
+    const finalListResponse = await analyzeWithGroq(
+      finalListPrompt,
+      "You are an expert electronics engineer. Select compatible components for a complete system."
+    );
+
+    // Add delay to avoid rate limits
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    let finalList: any = { finalParts: [], totalEstimatedCost: "", compatibilitySummary: "" };
+    try {
+      const trimmedResponse = finalListResponse.trim();
+      const startIndex = trimmedResponse.indexOf('{');
+      const endIndex = trimmedResponse.lastIndexOf('}');
+      if (startIndex !== -1 && endIndex !== -1 && startIndex < endIndex) {
+        const jsonString = trimmedResponse.substring(startIndex, endIndex + 1);
+        finalList = JSON.parse(jsonString);
+      }
+    } catch (e) {
+      console.error("Failed to parse final list:", e);
+      console.error('Raw response:', finalListResponse);
+    }
+
     return NextResponse.json({
       steps: steps.map((step) => ({
         ...step,
         timestamp: step.timestamp.toISOString(),
       })),
       partsList,
+      finalList,
     });
   } catch (error) {
     console.error("Agent execution error:", error);
