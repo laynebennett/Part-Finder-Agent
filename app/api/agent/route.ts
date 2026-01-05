@@ -224,12 +224,14 @@ Generate 3-5 specific search queries for each category. Format as a JSON array o
         })
         .join("\n\n---\n\n");
 
-      const analysisPrompt = `Based on the following search results for ${category}, extract and structure component recommendations.
+const analysisPrompt = `Based on the following search results for ${category}, extract and structure component recommendations.
 
 Search Results:
 ${resultsText}
 
-Provide a JSON response with this structure:
+CRITICAL: Respond with ONLY valid JSON. No explanations, no markdown, no text before or after. Start your response with { and end with }.
+
+Provide a JSON response with this exact structure:
 {
   "components": [
     {
@@ -240,7 +242,7 @@ Provide a JSON response with this structure:
           "specifications": ["spec1", "spec2"],
           "pros": ["pro1", "pro2"],
           "cons": ["con1", "con2"],
-          "datasheetLink": "url if found",
+          "datasheetLink": "ONLY include if from manufacturer website, DigiKey, Mouser, or Octopart. Otherwise leave empty or omit.",
           "vendorLinks": [
             {"name": "vendor name", "url": "vendor url", "price": "price if available"}
           ]
@@ -250,22 +252,56 @@ Provide a JSON response with this structure:
   ]
 }
 
+Important: Only include datasheetLink if the URL is from a reputable source (manufacturer website, digikey.com, mouser.com, octopart.com). 
 Include 2-4 options per component. Be specific with specifications, pros, and cons.`;
 
       const componentAnalysis = await analyzeWithGroq(
         analysisPrompt,
-        "You are an expert electronics engineer. Analyze search results and provide structured component recommendations."
+        "You are an expert electronics engineer. Respond ONLY with valid JSON, no other text."
       );
 
       // Add delay to avoid rate limits
       await new Promise(resolve => setTimeout(resolve, 2000));
 
       try {
-        const jsonMatch = componentAnalysis.match(/\{[\s\S]*\}/);
-        const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : { components: [] };
+        let jsonString = componentAnalysis.trim();
+        
+        // Try to extract JSON from markdown code blocks first
+        const codeBlockMatch = jsonString.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+        if (codeBlockMatch) {
+          jsonString = codeBlockMatch[1].trim();
+        } else {
+          // Look for JSON object boundaries more carefully
+          // Find the first { that's likely the start of our JSON
+          const startIndex = jsonString.indexOf('{');
+          if (startIndex === -1) {
+            throw new Error('No opening brace found in response');
+          }
+          
+          // Find matching closing brace by counting braces
+          let braceCount = 0;
+          let endIndex = -1;
+          for (let i = startIndex; i < jsonString.length; i++) {
+            if (jsonString[i] === '{') braceCount++;
+            if (jsonString[i] === '}') braceCount--;
+            if (braceCount === 0) {
+              endIndex = i;
+              break;
+            }
+          }
+          
+          if (endIndex === -1) {
+            throw new Error('No matching closing brace found in response');
+          }
+          
+          jsonString = jsonString.substring(startIndex, endIndex + 1);
+        }
+        
+        const parsed = JSON.parse(jsonString);
         componentRecommendations[category] = parsed.components || [];
       } catch (e) {
         console.error(`Failed to parse component analysis for ${category}:`, e);
+        console.error('Raw response:', componentAnalysis);
         componentRecommendations[category] = [];
       }
     }
