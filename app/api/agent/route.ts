@@ -204,7 +204,7 @@ export async function POST(request: NextRequest) {
     // Step 1: Parse requirements and identify components
     const analysisPrompt = `Analyze the following project description and identify the electronic components needed. 
 Provide a structured JSON response with:
-1. Required component categories (limit to 3-5 key categories to keep the response concise, e.g., "Microcontrollers", "Sensors", etc. Do NOT repeat categories)
+1. Required component categories (limit to 1-5 key categories to keep the response concise, e.g., "Microcontrollers", "Sensors", etc. Do NOT repeat categories)
 2. Key specifications for each category
 3. Any constraints or special requirements
 
@@ -398,7 +398,7 @@ Provide a JSON response with this exact structure:
   ]
 }
 
-Include 1-3 options per component. Include 1-3 components per category. Be specific with specifications, pros, and cons.`;
+Include 1-3 options per component, prioritizing using as few as necessary. Include 1-3 components per category. Be specific with specifications, pros, and cons.`;
 
       const componentAnalysis = await analyzeWithGroq(
         analysisPrompt,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 interface AgentStep {
   step: string;
@@ -53,6 +53,15 @@ export default function Home() {
   const [partsList, setPartsList] = useState<PartsList | null>(null);
   const [finalList, setFinalList] = useState<FinalList | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isDarkMode, setIsDarkMode] = useState(false);
+
+  useEffect(() => {
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [isDarkMode]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -102,12 +111,31 @@ export default function Home() {
       <div className="container mx-auto px-4 py-8 max-w-7xl">
         {/* Header */}
         <header className="mb-8">
-          <h1 className="text-4xl font-bold text-slate-900 dark:text-white mb-2">
-            Part Finder Agent
-          </h1>
-          <p className="text-slate-600 dark:text-slate-300">
-            AI-powered assistant to help you find electronic components for your projects
-          </p>
+          <div className="flex justify-between items-center">
+            <div>
+              <h1 className="text-4xl font-bold text-slate-900 dark:text-white mb-2">
+                Part Finder Agent
+              </h1>
+              <p className="text-slate-600 dark:text-slate-300">
+                AI-powered assistant to help you find electronic components for your projects
+              </p>
+            </div>
+            <button
+              onClick={() => setIsDarkMode(!isDarkMode)}
+              className="p-2 rounded-lg bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors duration-200"
+              aria-label="Toggle dark mode"
+            >
+              {isDarkMode ? (
+                <svg className="w-6 h-6 text-slate-900 dark:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                </svg>
+              ) : (
+                <svg className="w-6 h-6 text-slate-900 dark:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                </svg>
+              )}
+            </button>
+          </div>
         </header>
 
         {/* Input Form */}
@@ -125,7 +153,7 @@ export default function Home() {
                 value={projectDescription}
                 onChange={(e) => setProjectDescription(e.target.value)}
                 placeholder="Describe your project and the components you need. For example: 'I'm building a temperature monitoring system that needs to measure temperatures from -40°C to 125°C with 0.1°C accuracy. I need sensors, a microcontroller, and a display.'"
-                className="w-full px-4 py-3 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-slate-700 dark:text-white resize-none"
+                className="w-full px-4 py-3 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-slate-50 dark:bg-slate-700 text-slate-900 dark:text-white resize-none"
                 rows={6}
                 disabled={isLoading}
               />
