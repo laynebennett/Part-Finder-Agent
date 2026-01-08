@@ -32,6 +32,7 @@ interface FinalList {
     category: string;
     component: string;
     selectedOption: {
+      photoUrl: string | undefined;
       name: string;
       specifications: string[];
       pros: string[];
@@ -281,7 +282,9 @@ export default function Home() {
                                   </ul>
                                 </div>
                               )}
-                              {option.datasheetLink && (
+                              
+                              {/* Removed datasheet and vendor links from recommended parts list */}
+                              {/* {option.datasheetLink && (
                                 <div className="mb-2">
                                   <a
                                     href={option.datasheetLink}
@@ -314,7 +317,7 @@ export default function Home() {
                                     ))}
                                   </ul>
                                 </div>
-                              )}
+                              )} */}
                             </div>
                           ))}
                         </div>
@@ -362,6 +365,13 @@ export default function Home() {
                       <p className="text-sm font-medium text-slate-900 dark:text-white">
                         {part.selectedOption.name}
                       </p>
+                      {part.selectedOption.photoUrl && (
+                        <img
+                          src={part.selectedOption.photoUrl}
+                          alt={part.selectedOption.name}
+                          className="w-16 h-16 object-contain mt-2 rounded"
+                        />
+                      )}
                     </div>
                   </div>
                   {part.selectedOption.specifications.length > 0 && (

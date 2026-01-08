@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Groq from "groq-sdk";
 import axios from "axios";
+import { access } from "fs";
 
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
@@ -9,12 +10,67 @@ const groq = new Groq({
 const TAVILY_API_URL = "https://api.tavily.com/search";
 const DIGIKEY_API_URL = "https://api.digikey.com"; // Base URL for DigiKey API
 
+const clientId = process.env.DIGIKEY_CLIENT_ID!;
+const clientSecret = process.env.DIGIKEY_CLIENT_SECRET!;
+
 interface AgentStep {
   step: string;
   reasoning?: string;
   searchQueries?: string[];
   results?: any;
   timestamp: Date;
+}
+
+function extractJSON(text: string): any {
+  const trimmed = text.trim();
+  
+  // Try to find JSON in markdown code blocks first
+  const codeBlockMatch = trimmed.match(/```(?:json)?\s*([\[\{][\s\S]*?[\]\}])\s*```/);
+  if (codeBlockMatch) {
+    console.log("Extracted JSON from code block");
+    return JSON.parse(codeBlockMatch[1].trim());
+  }
+  
+  // Find the first { or [ and match its closing } or ]
+  let jsonStart = trimmed.indexOf('{');
+  let isObject = true;
+  
+  if (jsonStart === -1) {
+    jsonStart = trimmed.indexOf('[');
+    isObject = false;
+  }
+  
+  if (jsonStart === -1) {
+    console.log('No JSON object or array found in response');
+    throw new Error('No JSON object or array found in response');
+  }
+  
+  const openChar = isObject ? '{' : '[';
+  const closeChar = isObject ? '}' : ']';
+  let braceCount = 0;
+  let jsonEnd = -1;
+  
+  for (let i = jsonStart; i < trimmed.length; i++) {
+    const char = trimmed[i];
+    if (char === openChar) braceCount++;
+    if (char === closeChar) {
+      braceCount--;
+      if (braceCount === 0) {
+        jsonEnd = i;
+        break;
+      }
+    }
+  }
+  
+  if (jsonEnd === -1) {
+    console.log('No matching closing bracket found');
+    throw new Error('No matching closing bracket found');
+  }
+  
+  const jsonString = trimmed.substring(jsonStart, jsonEnd + 1);
+  
+  console.log(jsonString);
+  return JSON.parse(jsonString);
 }
 
 async function searchWithTavily(query: string): Promise<any> {
@@ -35,18 +91,48 @@ async function searchWithTavily(query: string): Promise<any> {
   }
 }
 
-async function searchWithDigiKey(query: string): Promise<any> {
+// 1. Get access token first
+async function getDigikeyToken(clientId: string, clientSecret: string) {
+  const tokenUrl = 'https://api.digikey.com/v1/oauth2/token';
+  
+  const params = new URLSearchParams({
+    client_id: clientId,
+    client_secret: clientSecret,
+    grant_type: 'client_credentials'
+  });
+
+  const response = await fetch(tokenUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: params.toString()
+  });
+
+  const data = await response.json();
+
+  console.log("DigiKey Token Response:", data);
+
+  return data.access_token; // Save this!
+}
+
+async function searchWithDigiKey(query: string, accessToken: string): Promise<any> {
   try {
-    const response = await axios.get(`${DIGIKEY_API_URL}/search/v3/products/keyword`, {
-      params: {
-        keywords: query,
-        limit: 5,
+    const response = await axios.post(
+      `${DIGIKEY_API_URL}/products/v4/search/keyword`,
+      {
+        Keywords: query,
+        Limit: 1,
+        Offset: 0,
       },
-      headers: {
-        'Authorization': `Bearer ${process.env.DIGIKEY_API_KEY}`,
-        'X-DIGIKEY-Client-Id': process.env.DIGIKEY_CLIENT_ID || '', // If needed
-      },
-    });
+      {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'X-DIGIKEY-Client-Id': process.env.DIGIKEY_CLIENT_ID || '',
+          'Content-Type': 'application/json'
+        },
+      }
+    );
     return response.data;
   } catch (error) {
     console.error("DigiKey search error:", error);
@@ -67,6 +153,7 @@ async function analyzeWithGroq(
           ...(systemPrompt ? [{ role: "system" as const, content: systemPrompt }] : []),
           { role: "user" as const, content: prompt },
         ],
+        response_format: { "type": "json_object" },
         temperature: 0.7,
       });
       return response.choices[0]?.message?.content || "";
@@ -117,7 +204,7 @@ export async function POST(request: NextRequest) {
     // Step 1: Parse requirements and identify components
     const analysisPrompt = `Analyze the following project description and identify the electronic components needed. 
 Provide a structured JSON response with:
-1. Required component categories (e.g., "Microcontrollers", "Sensors", "Power Management", etc.)
+1. Required component categories (limit to 3-5 key categories to keep the response concise, e.g., "Microcontrollers", "Sensors", etc. Do NOT repeat categories)
 2. Key specifications for each category
 3. Any constraints or special requirements
 
@@ -176,12 +263,12 @@ Respond in JSON format with this structure:
     const searchPlanPrompt = `Based on the following component categories, generate specific search queries to find:
 1. Component options and alternatives
 2. Datasheets and technical specifications
-3. Vendor information and pricing
+3. Digikey vendor information and pricing
 4. Comparison reviews
 
 Categories: ${JSON.stringify(requirementsData.categories, null, 2)}
 
-Generate 3-5 specific search queries for each category. Format as a JSON array of objects:
+Generate 3-5 specific search queries for each category. Format as a JSON array of objects EXACTLY in the format shown here, ensuring the structure includes "category" and "queries":
 [
   {"category": "category name", "queries": ["query1", "query2", "query3"]}
 ]`;
@@ -191,6 +278,8 @@ Generate 3-5 specific search queries for each category. Format as a JSON array o
       "You are an expert at finding electronic components. Generate effective search queries."
     );
 
+    console.log("Extracted search plan:", searchPlanResponse);
+
     // Add delay to avoid rate limits
     await new Promise(resolve => setTimeout(resolve, 2000));
 
@@ -198,6 +287,9 @@ Generate 3-5 specific search queries for each category. Format as a JSON array o
     try {
       const jsonMatch = searchPlanResponse.match(/\[[\s\S]*\]/);
       searchPlan = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
+
+      console.log("Extracted search plan:", searchPlan);
+
       // Deduplicate search plan by category
       const uniqueSearchPlan = new Map();
       for (const item of searchPlan) {
@@ -210,6 +302,16 @@ Generate 3-5 specific search queries for each category. Format as a JSON array o
       console.error("Failed to parse search plan:", e);
       searchPlan = [];
     }
+/*
+    let searchPlan: Array<{ category: string; queries: string[] }> = [];
+    try {
+      searchPlan = extractJSON(searchPlanResponse);
+      console.log("Extracted search plan:", searchPlan);
+    } catch (e) {
+      console.error("Failed to parse search plan:", e);
+      console.error("Raw search plan response:", searchPlanResponse);
+      searchPlan = [];
+    }*/
 
     // Step 3: Execute searches and analyze results
     const allSearchQueries: string[] = [];
@@ -242,6 +344,10 @@ Generate 3-5 specific search queries for each category. Format as a JSON array o
       searchResultsMap.set(planItem.category, categoryResults);
     }
 
+    const token = await getDigikeyToken(clientId, clientSecret);
+
+    console.log("DigiKey Token: " + token);
+
     // Step 4: Analyze search results and extract component information
     steps.push({
       step: "Analyzing search results",
@@ -255,12 +361,14 @@ Generate 3-5 specific search queries for each category. Format as a JSON array o
       const resultsText = results
         .map((r) => {
           const resultSnippets = (r.results || [])
-            .slice(0, 5)
+            .slice(0, 2) // Limit to 3 results per query to reduce token usage
             .map((item: any) => `${item.title}: ${item.content}`)
             .join("\n\n");
           return `Query: ${r.query}\nAnswer: ${r.answer}\nResults:\n${resultSnippets}`;
         })
         .join("\n\n---\n\n");
+
+//console.log("resultsText:" + resultsText);
 
 const analysisPrompt = `Based on the following search results for ${category}, extract and structure component recommendations.
 
@@ -280,7 +388,7 @@ Provide a JSON response with this exact structure:
           "specifications": ["spec1", "spec2"],
           "pros": ["pro1", "pro2"],
           "cons": ["con1", "con2"],
-          "datasheetLink": "ONLY include if from manufacturer website, DigiKey, Mouser, or Octopart. Otherwise leave empty or omit.",
+          "datasheetLink": "Leave this blank for now",
           "vendorLinks": [
             {"name": "vendor name", "url": "vendor url", "price": "price if available"}
           ]
@@ -290,13 +398,15 @@ Provide a JSON response with this exact structure:
   ]
 }
 
-Important: Only include datasheetLink if the URL is from a reputable source (manufacturer website, digikey.com, mouser.com, octopart.com). 
-Include 2-4 options per component. Be specific with specifications, pros, and cons.`;
+Include 1-3 options per component. Include 1-3 components per category. Be specific with specifications, pros, and cons.`;
 
       const componentAnalysis = await analyzeWithGroq(
         analysisPrompt,
         "You are an expert electronics engineer. Respond ONLY with valid JSON, no other text."
       );
+
+      console.log(`Component analysis for ${category}: ${componentAnalysis}`);
+
 
       // Add delay to avoid rate limits
       await new Promise(resolve => setTimeout(resolve, 2000));
@@ -336,6 +446,13 @@ Include 2-4 options per component. Be specific with specifications, pros, and co
         }
         
         const parsed = JSON.parse(jsonString);
+
+        // Log datasheet links for debugging
+        const datasheetLinks = parsed.components?.flatMap((comp: any) => 
+          comp.options?.map((opt: any) => opt.datasheetLink).filter(Boolean)
+        ) || [];
+        console.log(`Datasheet links for ${category}:`, datasheetLinks);
+
         componentRecommendations[category] = parsed.components || [];
       } catch (e) {
         console.error(`Failed to parse component analysis for ${category}:`, e);
@@ -372,7 +489,7 @@ ${JSON.stringify(partsList, null, 2)}
 
 Project Description: ${projectDescription}
 
-Select exactly one option per component, ensuring all selected parts are compatible with each other (e.g., voltage levels, interfaces, power requirements). Consider the project requirements and constraints.
+Select exactly one option per component (unless the component is not necessary, in which case do not include it), ensuring all selected parts are compatible with each other (e.g., voltage levels, interfaces, power requirements). Consider the project requirements and constraints.
 
 Respond ONLY with valid JSON in this structure:
 {
@@ -411,7 +528,50 @@ Respond ONLY with valid JSON in this structure:
       if (startIndex !== -1 && endIndex !== -1 && startIndex < endIndex) {
         const jsonString = trimmedResponse.substring(startIndex, endIndex + 1);
         finalList = JSON.parse(jsonString);
+        
+        // Log selected datasheet links for debugging
+        const selectedDatasheetLinks = finalList.finalParts?.map((part: any) => part.selectedOption?.datasheetLink).filter(Boolean) || [];
+
+        //INSERT USE OF DIGIKEY SEARCH HERE USING EACH NAME IN finalList.finalParts[i].selectedOption.name
+
+        for (const part of finalList.finalParts) {
+          const componentName = part.selectedOption?.name;
+
+          const digiKeyResults = await searchWithDigiKey(componentName, token);
+          console.log(`DigiKey search results for ${componentName}:`, digiKeyResults);
+
+          // Set final parts links to DigiKey links if possible, otherwise remove the link
+          part.selectedOption.vendorLinks = []; // Clear existing vendor links
+          if (digiKeyResults && digiKeyResults.Products && digiKeyResults.Products.length > 0) {
+            const product = digiKeyResults.Products[0]; // Use the first result
+            if (product.DatasheetUrl) {
+              part.selectedOption.datasheetLink = product.DatasheetUrl;
+            } else {
+              part.selectedOption.datasheetLink = '';
+            }
+            // Add photo URL
+            part.selectedOption.photoUrl = product.PhotoUrl || '';
+            // Add DigiKey to vendorLinks
+            part.selectedOption.vendorLinks.push({
+              name: 'DigiKey',
+              url: product.ProductUrl || `https://www.digikey.com/en/products/result?keywords=${encodeURIComponent(componentName)}`,
+              price: product.UnitPrice ? `$${product.UnitPrice}` : ''
+            });
+          } else {
+            part.selectedOption.datasheetLink = '';
+            // Leave vendorLinks empty
+          }
+
+          // Remove the old check since we're now setting it properly
+          // const datasheetLink = part.selectedOption?.datasheetLink || "";
+          // if (datasheetLink.includes("digikey.com")) {
+          //   console.log(`Datasheet link for ${componentName} is from DigiKey: ${datasheetLink}`);
+          // }
+        }
+
+        console.log('Selected datasheet links in final list:', selectedDatasheetLinks);
       }
+
     } catch (e) {
       console.error("Failed to parse final list:", e);
       console.error('Raw response:', finalListResponse);
