@@ -4,10 +4,10 @@ An autonomous AI agent that helps engineers find electronic components for their
 
 ## Features
 
-- 🤖 **AI-Powered Analysis**: Uses Groq (Llama 3.1) to understand project requirements and reason about component needs
-- 🔍 **Web Search Integration**: Leverages Tavily API to search for components, datasheets, and vendor information
-- 📋 **Comprehensive Parts Lists**: Generates detailed component recommendations with specifications, pros/cons, and purchasing links
-- 🎨 **Modern UI**: Clean, responsive interface built with Tailwind CSS
+**AI-Powered Analysis**: Uses Groq (Llama 3.1) to understand project requirements and reason about component needs
+**Web Search Integration**: Leverages Tavily API to search for components, datasheets, and vendor information
+**Comprehensive Parts Lists**: Generates detailed component recommendations with specifications, pros/cons, and purchasing links
+**Modern UI**: Clean, responsive interface built with Tailwind CSS
 
 ## Getting Started
 
